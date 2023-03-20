@@ -4,18 +4,17 @@ with open('VERSION.txt', 'r') as f:
     version = f.read().strip()
 
 setuptools.setup(
-    name="odoo-addons-oca-wms",
+    name="odoo12-addons-oca-wms",
     description="Meta package for oca-wms Odoo addons",
     version=version,
     install_requires=[
-        'odoo-addon-stock_available_to_promise_release>=16.0dev,<16.1dev',
-        'odoo-addon-stock_dynamic_routing>=16.0dev,<16.1dev',
-        'odoo-addon-stock_picking_completion_info>=16.0dev,<16.1dev',
-        'odoo-addon-stock_release_channel>=16.0dev,<16.1dev',
+        'odoo12-addon-stock_storage_type',
+        'odoo12-addon-wms',
+        'odoo12-addon-wms_demo',
     ],
     classifiers=[
         'Programming Language :: Python',
         'Framework :: Odoo',
-        'Framework :: Odoo :: 16.0',
+        'Framework :: Odoo :: 12.0',
     ]
 )
