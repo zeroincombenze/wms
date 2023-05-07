@@ -1,7 +1,9 @@
 # Copyright 2020 Camptocamp (https://www.camptocamp.com)
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html)
 
-from odoo import fields
+import logging
+
+from odoo import _, fields
 from odoo.tests import common
 
 from odoo.addons.stock_available_to_promise_release.tests.common import (
@@ -19,6 +21,21 @@ class ReleaseChannelCase(common.TransactionCase):
             "stock_release_channel.stock_release_channel_default"
         )
         cls._create_base_data()
+
+    def setUp(self):
+        super(ReleaseChannelCase, self).setUp()
+        loggers = ["odoo.addons.stock_release_channel.models.stock_release_channel"]
+        for logger in loggers:
+            logging.getLogger(logger).addFilter(self)
+
+        # pylint: disable=unused-variable
+        @self.addCleanup
+        def un_mute_logger():
+            for logger_ in loggers:
+                logging.getLogger(logger_).removeFilter(self)
+
+    def filter(self, record):
+        return 0
 
     @classmethod
     def _create_base_data(cls):
@@ -56,12 +73,13 @@ class ReleaseChannelCase(common.TransactionCase):
             in_date=in_date,
         )
 
-    def _create_single_move(self, product, qty, group=None):
+    @classmethod
+    def _create_single_move(cls, product, qty, group=None):
         # create a group so different moves are not merged in
         # the same picking
         if not group:
-            group = self.env["procurement.group"].create({})
-        picking_type = self.wh.out_type_id
+            group = cls.env["procurement.group"].create({})
+        picking_type = cls.wh.out_type_id
         move_vals = {
             "name": product.name,
             "picking_type_id": picking_type.id,
@@ -69,35 +87,37 @@ class ReleaseChannelCase(common.TransactionCase):
             "product_uom_qty": qty,
             "product_uom": product.uom_id.id,
             "location_id": picking_type.default_location_src_id.id,
-            "location_dest_id": self.customer_location.id,
+            "location_dest_id": cls.customer_location.id,
             "state": "confirmed",
             "procure_method": "make_to_stock",
             "group_id": group.id,
         }
-        move = self.env["stock.move"].create(move_vals)
+        move = cls.env["stock.move"].create(move_vals)
         move._assign_picking()
         return move
 
-    def _create_channel(self, **vals):
-        return self.env["stock.release.channel"].create(vals)
+    @classmethod
+    def _create_channel(cls, **vals):
+        return cls.env["stock.release.channel"].create(vals)
 
-    def _run_procurement(self, move, date=None):
+    @classmethod
+    def _run_procurement(cls, move, date=None):
         values = {
-            "company_id": self.wh.company_id,
+            "company_id": cls.wh.company_id,
             "group_id": move.picking_id.group_id,
             "date_planned": date or fields.Datetime.now(),
-            "warehouse_id": self.wh,
+            "warehouse_id": cls.wh,
         }
-        self.env["procurement.group"].run(
+        cls.env["procurement.group"].run(
             [
-                self.env["procurement.group"].Procurement(
+                cls.env["procurement.group"].Procurement(
                     move.product_id,
                     move.product_uom_qty,
                     move.product_uom,
-                    self.customer_location,
+                    cls.customer_location,
                     "TEST",
                     "TEST",
-                    self.wh.company_id,
+                    cls.wh.company_id,
                     values,
                 )
             ]
@@ -154,3 +174,16 @@ class ChannelReleaseCase(PromiseReleaseCommonCase):
         for line in picking.move_line_ids:
             line.qty_done = line.reserved_qty
         picking._action_done()
+
+    def _assert_action_nothing_in_the_queue(self, action):
+        self.assertEqual(
+            action,
+            {
+                "effect": {
+                    "fadeout": "fast",
+                    "message": _("Nothing in the queue!"),
+                    "img_url": "/web/static/src/img/smile.svg",
+                    "type": "rainbow_man",
+                }
+            },
+        )

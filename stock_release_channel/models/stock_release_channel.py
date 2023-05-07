@@ -6,6 +6,7 @@ import logging
 from pytz import timezone
 
 from odoo import _, api, exceptions, fields, models
+from odoo.osv.expression import NEGATIVE_TERM_OPERATORS
 from odoo.tools.safe_eval import (
     datetime as safe_datetime,
     dateutil as safe_dateutil,
@@ -64,19 +65,17 @@ class StockReleaseChannel(models.Model):
         help="Write Python code to filter out pickings.",
     )
     active = fields.Boolean(default=True)
-
-    auto_release = fields.Selection(
-        selection=[
-            ("max", "Max"),
-            ("group_commercial_partner", "Grouped by Commercial Partner"),
-        ],
+    release_mode = fields.Selection(
+        [("batch", "Batch (Manual)")], required=True, default="batch"
+    )
+    batch_mode = fields.Selection(
+        selection=[("max", "Max")],
         default="max",
         required=True,
         help="Max: release N transfers to have a configured max of X deliveries"
-        " in progress.\nGrouped by Commercial Partner: release all transfers for a"
-        "commercial partner at once.",
+        " in progress.",
     )
-    max_auto_release = fields.Integer(
+    max_batch_mode = fields.Integer(
         string="Max Transfers to release",
         default=10,
         help="When clicking on the package icon, it releases X transfers minus "
@@ -170,6 +169,98 @@ class StockReleaseChannel(models.Model):
     )
     last_done_picking_name = fields.Char(compute="_compute_last_done_picking")
     last_done_picking_date_done = fields.Datetime(compute="_compute_last_done_picking")
+    state = fields.Selection(
+        selection=[("open", "Open"), ("locked", "Locked"), ("asleep", "Asleep")],
+        help="The state allows you to control the availability of the release channel.\n"
+        "* Open: Manual and automatic picking assignment to the release is effective "
+        "and release operations are allowed.\n "
+        "* Locked: Release operations are forbidden. (Assignement processes are "
+        "still working)\n"
+        "* Asleep: Assigned pickings not processed are unassigned from the release "
+        "channel.\n",
+        default="open",
+    )
+    is_action_lock_allowed = fields.Boolean(
+        compute="_compute_is_action_lock_allowed",
+        help="Technical field to check if the " "action 'Lock' is allowed.",
+    )
+    is_action_unlock_allowed = fields.Boolean(
+        compute="_compute_is_action_unlock_allowed",
+        help="Technical field to check if the " "action 'Unlock' is allowed.",
+    )
+    is_action_sleep_allowed = fields.Boolean(
+        compute="_compute_is_action_sleep_allowed",
+        help="Technical field to check if the " "action 'Sleep' is allowed.",
+    )
+    is_action_wake_up_allowed = fields.Boolean(
+        compute="_compute_is_action_wake_up_allowed",
+        help="Technical field to check if the " "action 'Wake Up' is allowed.",
+    )
+    is_release_allowed = fields.Boolean(
+        compute="_compute_is_release_allowed",
+        search="_search_is_release_allowed",
+        help="Technical field to check if the "
+        "action 'Release Next Batch' is allowed.",
+    )
+
+    @api.depends("state")
+    def _compute_is_action_lock_allowed(self):
+        for rec in self:
+            rec.is_action_lock_allowed = rec.state == "open"
+
+    @api.depends("state")
+    def _compute_is_action_unlock_allowed(self):
+        for rec in self:
+            rec.is_action_unlock_allowed = rec.state == "locked"
+
+    @api.depends("state")
+    def _compute_is_action_sleep_allowed(self):
+        for rec in self:
+            rec.is_action_sleep_allowed = rec.state in ("open", "locked")
+
+    @api.depends("state")
+    def _compute_is_action_wake_up_allowed(self):
+        for rec in self:
+            rec.is_action_wake_up_allowed = rec.state == "asleep"
+
+    @api.depends("state", "release_forbidden")
+    def _compute_is_release_allowed(self):
+        for rec in self:
+            rec.is_release_allowed = rec.state == "open" and not rec.release_forbidden
+
+    @api.model
+    def _get_is_release_allowed_domain(self):
+        return [("state", "=", "open"), ("release_forbidden", "=", False)]
+
+    @api.model
+    def _get_is_release_not_allowed_domain(self):
+        return ["|", ("state", "!=", "open"), ("release_forbidden", "=", True)]
+
+    @api.model
+    def _search_is_release_allowed(self, operator, value):
+        if "in" in operator:
+            raise ValueError(f"Invalid operator {operator}")
+        negative_op = operator in NEGATIVE_TERM_OPERATORS
+        is_release_allowed = (value and not negative_op) or (not value and negative_op)
+        domain = self._get_is_release_allowed_domain()
+        if not is_release_allowed:
+            domain = self._get_is_release_not_allowed_domain()
+        return domain
+
+    def _get_picking_to_unassign_domain(self):
+        return [
+            ("release_channel_id", "in", self.ids),
+            ("state", "not in", ("done", "cancel")),
+        ]
+
+    @api.model
+    def _get_picking_to_assign_domain(self):
+        return [
+            ("release_channel_id", "=", False),
+            ("state", "not in", ("done", "cancel")),
+            ("picking_type_id.code", "=", "outgoing"),
+            ("need_release", "=", True),
+        ]
 
     def _field_picking_domains(self):
         return {
@@ -184,24 +275,24 @@ class StockReleaseChannel(models.Model):
                 ),
             ],
             "count_picking_released": [
-                ("need_release", "=", False),
+                ("last_release_date", "!=", False),
                 ("state", "in", ("assigned", "waiting", "confirmed")),
             ],
             "count_picking_assigned": [
-                ("need_release", "=", False),
+                ("last_release_date", "!=", False),
                 ("state", "=", "assigned"),
             ],
             "count_picking_waiting": [
-                ("need_release", "=", False),
+                ("last_release_date", "!=", False),
                 ("state", "in", ("waiting", "confirmed")),
             ],
             "count_picking_late": [
-                ("need_release", "=", False),
+                ("last_release_date", "!=", False),
                 ("scheduled_date", "<", fields.Datetime.now()),
                 ("state", "in", ("assigned", "waiting", "confirmed")),
             ],
             "count_picking_priority": [
-                ("need_release", "=", False),
+                ("last_release_date", "!=", False),
                 ("priority", "=", "1"),
                 ("state", "in", ("assigned", "waiting", "confirmed")),
             ],
@@ -372,47 +463,39 @@ class StockReleaseChannel(models.Model):
         domain = safe_eval(self.rule_domain) or []
         return domain
 
-    def assign_release_channel(self, pickings):
-        pickings = pickings.filtered(
-            lambda picking: picking.picking_type_id.code == "outgoing"
-            and picking.state not in ("cancel", "done")
-        )
-        if not pickings:
+    @api.model
+    def assign_release_channel(self, picking):
+        picking.ensure_one()
+        if picking.picking_type_id.code != "outgoing" or picking.state in (
+            "cancel",
+            "done",
+        ):
             return
-        # do a single query rather than one for each rule*picking
-        for channel in self.sudo().search([]):
-            if channel.picking_type_ids:
-                current = pickings.filtered(
-                    lambda p: p.picking_type_id in channel.picking_type_ids
-                )
-            else:
-                current = pickings
-
+        for channel in picking._find_release_channel_possible_candidate():
+            current = picking
             domain = channel._prepare_domain()
+            if not domain and not channel.code:
+                current.release_channel_id = channel
             if domain:
-                current = current.filtered_domain(domain)
-
+                current = picking.filtered_domain(domain)
             if not current:
                 continue
-
             if channel.code:
                 current = channel._eval_code(current)
-
             if not current:
                 continue
             current = channel._assign_release_channel_additional_filter(current)
+            if not current:
+                continue
             current.release_channel_id = channel
+            break
 
-            pickings -= current
-            if not pickings:
-                break
-
-        if pickings:
-            # by this point, all pickings should have been assigned
+        if not picking.release_channel_id:
+            # by this point, the picking should have been assigned
             _logger.warning(
-                "%s transfers could not be assigned to a channel,"
+                "Transfer %s could not be assigned to a channel,"
                 " you should add a final catch-all rule",
-                len(pickings),
+                picking.name,
             )
         return True
 
@@ -576,17 +659,23 @@ class StockReleaseChannel(models.Model):
         return (-int(picking.priority or 1), picking.date_priority, picking.id)
 
     def _get_next_pickings(self):
-        return getattr(self, "_get_next_pickings_{}".format(self.auto_release))()
+        return getattr(self, "_get_next_pickings_{}".format(self.batch_mode))()
+
+    def _get_pickings_to_release(self):
+        """Get the pickings to release."""
+        domain = self._field_picking_domains()["count_picking_release_ready"]
+        domain += [("release_channel_id", "in", self.ids)]
+        return self.env["stock.picking"].search(domain)
 
     def _get_next_pickings_max(self):
-        if not self.max_auto_release:
+        if not self.max_batch_mode:
             raise exceptions.UserError(_("No Max transfers to release is configured."))
 
         waiting_domain = self._field_picking_domains()["count_picking_waiting"]
         waiting_domain += [("release_channel_id", "=", self.id)]
         released_in_progress = self.env["stock.picking"].search_count(waiting_domain)
 
-        release_limit = max(self.max_auto_release - released_in_progress, 0)
+        release_limit = max(self.max_batch_mode - released_in_progress, 0)
         if not release_limit:
             raise exceptions.UserError(
                 _(
@@ -594,35 +683,25 @@ class StockReleaseChannel(models.Model):
                     " progress is already at the maximum."
                 )
             )
-        domain = self._field_picking_domains()["count_picking_release_ready"]
-        domain += [("release_channel_id", "=", self.id)]
-        next_pickings = self.env["stock.picking"].search(domain)
+        next_pickings = self._get_pickings_to_release()
         # We have to use a python sort and not a order + limit on the search
         # because "date_priority" is computed and not stored. If needed, we
         # should evaluate making it a stored field in the module
         # "stock_available_to_promise_release".
         return next_pickings.sorted(self._pickings_sort_key)[:release_limit]
 
-    def _get_next_pickings_group_commercial_partner(self):
-        domain = self._field_picking_domains()["count_picking_release_ready"]
-        domain += [("release_channel_id", "=", self.id)]
-        # We have to use a python sort and not a order + limit on the search
-        # because "date_priority" is computed and not stored. If needed, we
-        # should evaluate making it a stored field in the module
-        # "stock_available_to_promise_release".
-        next_pickings = (
-            self.env["stock.picking"].search(domain).sorted(self._pickings_sort_key)
-        )
-        if not next_pickings:
-            return self.env["stock.picking"].browse()
-        first_picking = next_pickings[0]
-        commercial_partner = first_picking.commercial_partner_id
-        partner_pickings = next_pickings.filtered(
-            lambda p: p.commercial_partner_id == commercial_partner
-        )
-        return partner_pickings
+    def _check_is_release_allowed(self):
+        for rec in self:
+            if not rec.is_release_allowed:
+                raise exceptions.UserError(
+                    _(
+                        "The release of pickings is not allowed for channel %(name)s.",
+                        name=rec.name,
+                    )
+                )
 
     def release_next_batch(self):
+        self._check_is_release_allowed()
         self.ensure_one()
         next_pickings = self._get_next_pickings()
         if not next_pickings:
@@ -635,3 +714,73 @@ class StockReleaseChannel(models.Model):
                 }
             }
         next_pickings.release_available_to_promise()
+
+    def _check_is_action_lock_allowed(self):
+        for rec in self:
+            if not rec.is_action_lock_allowed:
+                raise exceptions.UserError(
+                    _(
+                        "Action 'Lock' is not allowed for channel %(name)s.",
+                        name=rec.name,
+                    )
+                )
+
+    def _check_is_action_unlock_allowed(self):
+        for rec in self:
+            if not rec.is_action_unlock_allowed:
+                raise exceptions.UserError(
+                    _(
+                        "Action 'Unlock' is not allowed for channel %(name)s.",
+                        name=rec.name,
+                    )
+                )
+
+    def _check_is_action_sleep_allowed(self):
+        for rec in self:
+            if not rec.is_action_sleep_allowed:
+                raise exceptions.UserError(
+                    _(
+                        "Action 'Sleep' is not allowed for channel %(name)s.",
+                        name=rec.name,
+                    )
+                )
+
+    def _check_is_action_wake_up_allowed(self):
+        for rec in self:
+            if not rec.is_action_wake_up_allowed:
+                raise exceptions.UserError(
+                    _(
+                        "Action 'Wake Up' is not allowed for channel %(name)s.",
+                        name=rec.name,
+                    )
+                )
+
+    def action_lock(self):
+        self._check_is_action_lock_allowed()
+        self.write({"state": "locked"})
+
+    def action_unlock(self):
+        self._check_is_action_unlock_allowed()
+        self.write({"state": "open"})
+
+    def action_sleep(self):
+        self._check_is_action_sleep_allowed()
+        pickings_to_unassign = self.env["stock.picking"].search(
+            self._get_picking_to_unassign_domain()
+        )
+        pickings_to_unassign.write({"release_channel_id": False})
+        pickings_to_unassign.unrelease()
+        self.write({"state": "asleep"})
+
+    def action_wake_up(self):
+        self._check_is_action_wake_up_allowed()
+        self.write({"state": "open"})
+        self.assign_pickings()
+
+    @api.model
+    def assign_pickings(self):
+        pickings = self.env["stock.picking"].search(
+            self._get_picking_to_assign_domain()
+        )
+        for pick in pickings:
+            pick._delay_assign_release_channel()
