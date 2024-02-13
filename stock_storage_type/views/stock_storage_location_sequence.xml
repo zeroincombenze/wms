@@ -4,16 +4,15 @@
         <field name="name">package.storage.location.tree.view</field>
         <field name="model">stock.storage.location.sequence</field>
         <field name="arch" type="xml">
-            <tree editable="bottom">
+            <tree string="Storage locations" editable="bottom">
                 <field name="sequence" widget="handle" />
                 <field
-                    name="package_type_id"
-                    readonly="context.get('default_package_type_id', False)"
+                    name="package_storage_type_id"
+                    readonly="context.get('default_package_storage_type_id', False)"
                     force_save="1"
                 />
                 <field name="location_id" />
                 <field name="location_putaway_strategy" />
-                <field name="location_sequence_cond_ids" widget="many2many_tags" />
                 <button
                     string="Show locations"
                     name="button_show_locations"

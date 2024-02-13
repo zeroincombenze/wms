@@ -1,9 +1,9 @@
 # Copyright 2020 Camptocamp SA
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl)
-from odoo.tests import TransactionCase
+from odoo.tests import SavepointCase
 
 
-class TestStorageTypeCommon(TransactionCase):
+class TestStorageTypeCommon(SavepointCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -25,9 +25,7 @@ class TestStorageTypeCommon(TransactionCase):
         cls.areas = (
             cls.cardboxes_location | cls.pallets_location | cls.pallets_reserve_location
         )
-        cls.location_sequence_pallet = ref(
-            "stock_storage_type.stock_package_storage_location_pallets"
-        )
+        # cls.putaway_locations = cls.cardboxes_location | cls.pallets_location
 
         cls.cardboxes_bin_1_location = ref(
             "stock_storage_type.stock_location_cardboxes_bin_1"
@@ -86,13 +84,12 @@ class TestStorageTypeCommon(TransactionCase):
         cls.product_pallet_product_packaging = ref(
             "stock_storage_type." "product_product_9_packaging_48_pallet"
         )
-        cls.pallet_pack_type = ref("stock_storage_type." "package_storage_type_pallets")
         cls.product_lot_cardbox_product_packaging = cls.env["product.packaging"].create(
             {
                 "name": "5 units cardbox",
                 "qty": 5,
                 "product_id": cls.product_lot.id,
-                "package_type_id": cls.cardboxes_package_storage_type.id,
+                "package_storage_type_id": cls.cardboxes_package_storage_type.id,
             }
         )
         cls.product_lot_pallets_product_packaging = cls.env["product.packaging"].create(
@@ -100,7 +97,7 @@ class TestStorageTypeCommon(TransactionCase):
                 "name": "20 units pallet",
                 "qty": 20,
                 "product_id": cls.product_lot.id,
-                "package_type_id": cls.pallets_package_storage_type.id,
+                "package_storage_type_id": cls.pallets_package_storage_type.id,
             }
         )
         cls.internal_picking_type.write({"show_entire_packs": True})

@@ -3,7 +3,7 @@
 from odoo.tests import common
 
 
-class TestRoutingPush(common.TransactionCase):
+class TestRoutingPush(common.SavepointCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -184,16 +184,16 @@ class TestRoutingPush(common.TransactionCase):
 
     def process_operations(self, moves):
         for move in moves:
-            qty = move.move_line_ids.reserved_uom_qty
+            qty = move.move_line_ids.product_uom_qty
             move.move_line_ids.qty_done = qty
-        move.mapped("picking_id")._action_done()
+        move.mapped("picking_id").action_done()
 
     def test_change_location_to_dynamic_routing(self):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         self.assertEqual(move_a.state, "assigned")
         self.process_operations(move_a)
 
@@ -232,12 +232,12 @@ class TestRoutingPush(common.TransactionCase):
         self.assert_src_handover(routing_move)
         self.assert_dest_highbay_1_2(routing_move)
 
-        self.assertEqual(routing_move.picking_type_id, self.pick_type_routing_op)
-        self.assertEqual(
+        self.assertEquals(routing_move.picking_type_id, self.pick_type_routing_op)
+        self.assertEquals(
             routing_move.picking_id.picking_type_id, self.pick_type_routing_op
         )
-        self.assertEqual(move_a.picking_id.picking_type_id, self.wh.in_type_id)
-        self.assertEqual(move_b.picking_id.picking_type_id, self.wh.int_type_id)
+        self.assertEquals(move_a.picking_id.picking_type_id, self.wh.in_type_id)
+        self.assertEquals(move_b.picking_id.picking_type_id, self.wh.int_type_id)
         self.assertEqual(move_a.state, "done")
         self.assertEqual(move_b.state, "assigned")
         self.assertEqual(routing_move.state, "waiting")
@@ -265,10 +265,10 @@ class TestRoutingPush(common.TransactionCase):
         )
         product1 = self.product1
         product2 = self.product2
-        in_moves = in_picking.move_ids
+        in_moves = in_picking.move_lines
         move_a_p1 = in_moves.filtered(lambda r: r.product_id == product1)
         move_a_p2 = in_moves.filtered(lambda r: r.product_id == product2)
-        internal_moves = internal_picking.move_ids
+        internal_moves = internal_picking.move_lines
         move_b_p1 = internal_moves.filtered(lambda r: r.product_id == product1)
         move_b_p2 = internal_moves.filtered(lambda r: r.product_id == product2)
         self.assertEqual(move_a_p1.state, "assigned")
@@ -317,19 +317,19 @@ class TestRoutingPush(common.TransactionCase):
         routing_picking = routing_move.picking_id
 
         # Check picking A
-        self.assertEqual(in_picking.move_ids, move_a_p1 + move_a_p2)
+        self.assertEqual(in_picking.move_lines, move_a_p1 + move_a_p2)
         self.assertEqual(in_picking.picking_type_id, self.wh.in_type_id)
         self.assert_src_supplier(in_picking)
         self.assert_dest_input(in_picking)
 
         # Check picking B
-        self.assertEqual(internal_picking.move_ids, move_b_p1 + move_b_p2)
+        self.assertEqual(internal_picking.move_lines, move_b_p1 + move_b_p2)
         self.assertEqual(internal_picking.picking_type_id, self.wh.int_type_id)
         self.assert_src_input(internal_picking)
         self.assert_dest_stock(internal_picking)
 
         # Check routing picking
-        self.assertEqual(routing_picking.move_ids, routing_move)
+        self.assertEqual(routing_picking.move_lines, routing_move)
         self.assertEqual(routing_picking.picking_type_id, self.pick_type_routing_op)
         self.assert_src_handover(routing_picking)
         self.assert_dest_highbay_1_2(routing_picking)
@@ -395,12 +395,12 @@ class TestRoutingPush(common.TransactionCase):
         self.assertEqual(move_b_p2.state, "done")
         self.assertEqual(routing_move.state, "done")
 
-    def test_several_move_ids(self):
+    def test_several_move_lines(self):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         # We do not want to trigger the dynamic routing now (see explanation
         # below)
         move_b.location_dest_id = self.wh.lot_stock_id
@@ -481,7 +481,7 @@ class TestRoutingPush(common.TransactionCase):
         # +--------------------------------------------------------+
 
         move_b_shelf = move_b
-        move_b_handover = move_b.picking_id.move_ids - move_b
+        move_b_handover = move_b.picking_id.move_lines - move_b
         self.assertEqual(len(move_b_handover), 1)
 
         routing_move = move_b_handover.move_dest_ids
@@ -502,19 +502,19 @@ class TestRoutingPush(common.TransactionCase):
         self.assertEqual(routing_move.state, "waiting")
 
         # Check picking A
-        self.assertEqual(in_picking.move_ids, move_a)
+        self.assertEqual(in_picking.move_lines, move_a)
         self.assertEqual(in_picking.picking_type_id, self.wh.in_type_id)
         self.assert_src_supplier(in_picking)
         self.assert_dest_input(in_picking)
 
         # Check picking B
-        self.assertEqual(internal_picking.move_ids, move_b_shelf + move_b_handover)
+        self.assertEqual(internal_picking.move_lines, move_b_shelf + move_b_handover)
         self.assertEqual(internal_picking.picking_type_id, self.wh.int_type_id)
         self.assert_src_input(internal_picking)
         self.assert_dest_stock(internal_picking)
 
         # Check routing picking
-        self.assertEqual(routing_picking.move_ids, routing_move)
+        self.assertEqual(routing_picking.move_lines, routing_move)
         self.assertEqual(routing_picking.picking_type_id, self.pick_type_routing_op)
         self.assert_src_handover(routing_picking)
         self.assert_dest_highbay_1_2(routing_picking)
@@ -537,7 +537,7 @@ class TestRoutingPush(common.TransactionCase):
         self.assertEqual(len(ml), 1)
         self.assert_src_input(ml)
         self.assert_dest_shelf1(ml)
-        self.assertEqual(ml.reserved_qty, 4.0)
+        self.assertEqual(ml.product_qty, 4.0)
         self.assertEqual(ml.qty_done, 0.0)
 
         # check move and move line B Handover
@@ -548,7 +548,7 @@ class TestRoutingPush(common.TransactionCase):
         self.assertEqual(len(ml), 1)
         self.assert_src_input(ml)
         self.assert_dest_handover(ml)
-        self.assertEqual(ml.reserved_qty, 6.0)
+        self.assertEqual(ml.product_qty, 6.0)
         self.assertEqual(ml.qty_done, 0.0)
 
         # check routing move for product1
@@ -600,8 +600,8 @@ class TestRoutingPush(common.TransactionCase):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         # go through our Input Handover location, as it is under the source location
         # of the routing's picking type, we should not have an additional move,
         # but move_b must be classified in the routing's picking type
@@ -643,8 +643,8 @@ class TestRoutingPush(common.TransactionCase):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
 
         self.process_operations(move_a)
 
@@ -673,8 +673,8 @@ class TestRoutingPush(common.TransactionCase):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         self.process_operations(move_a)
         self.assertEqual(move_b.picking_id.picking_type_id, self.wh.int_type_id)
         # the original chaining stays the same: we don't add any move here
@@ -690,8 +690,8 @@ class TestRoutingPush(common.TransactionCase):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         self.process_operations(move_a)
         # we have an extra move
         self.assertFalse(move_a.move_orig_ids)
@@ -738,8 +738,8 @@ class TestRoutingPush(common.TransactionCase):
         in_picking, internal_picking = self._create_supplier_input_highbay(
             self.wh, [(self.product1, 10, self.location_hb_1_2)]
         )
-        move_a = in_picking.move_ids
-        move_b = internal_picking.move_ids
+        move_a = in_picking.move_lines
+        move_b = internal_picking.move_lines
         self.assertEqual(move_a.state, "assigned")
         self.process_operations(move_a)
 

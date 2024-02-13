@@ -9,31 +9,28 @@ class StockQuant(models.Model):
     _inherit = "stock.quant"
 
     @api.constrains("package_id", "location_id", "lot_id", "product_id")
-    def _check_storage_capacities(self):
+    def _check_storage_type(self):
         """
-        Check if at least one storage capacity allows the package type
-        into the quant's location
+        Check if at least one location storage type allows the package storage
+        type into the quant's location
         """
         for quant in self:
             location = quant.location_id
-            package_type = quant.package_id.package_type_id
-            storage_capacities = location.computed_storage_category_id.capacity_ids
-            if not quant.package_id or not package_type or not storage_capacities:
+            pack_storage_type = quant.package_id.package_storage_type_id
+            loc_storage_types = location.allowed_location_storage_type_ids
+            if not quant.package_id or not pack_storage_type or not loc_storage_types:
                 continue
-            allowed_capacities = storage_capacities.filtered(
-                lambda capacity: package_type == capacity.package_type_id
+            lst_allowed_for_pst = loc_storage_types.filtered(
+                lambda lst: pack_storage_type in lst.package_storage_type_ids
             )
-            if not allowed_capacities:
+            if not lst_allowed_for_pst:
                 raise ValidationError(
-                    _(
-                        "Package type {storage} is not allowed into "
-                        "Location {location}"
-                    ).format(storage=package_type.name, location=location.name)
+                    _("Package storage type %s is not allowed into " "Location %s")
+                    % (pack_storage_type.name, location.name)
                 )
             allowed = False
-            package_weight_kg = (
-                quant.package_id.pack_weight_in_kg
-                or quant.package_id.estimated_pack_weight_kg
+            package_weight = (
+                quant.package_id.pack_weight or quant.package_id.estimated_pack_weight
             )
             package_quants = quant.package_id.mapped("quant_ids")
             package_products = package_quants.mapped("product_id")
@@ -47,76 +44,73 @@ class StockQuant(models.Model):
             )
             products_in_location = other_quants_in_location.mapped("product_id")
             lots_in_location = other_quants_in_location.mapped("lot_id")
-            capacity_fails = []
-            for capacity in allowed_capacities:
+            lst_fails = []
+            for loc_storage_type in lst_allowed_for_pst:
                 # Check content constraints
-                if capacity.allow_new_product == "empty" and other_quants_in_location:
-                    capacity_fails.append(
+                if loc_storage_type.only_empty and other_quants_in_location:
+                    lst_fails.append(
                         _(
-                            "Storage Capacity {storage_capacity} is flagged "
-                            "'only empty'"
-                            " with other quants in location."
-                        ).format(storage_capacity=capacity.display_name)
+                            "Location storage type %s is flagged 'only empty'"
+                            " with other quants in location." % loc_storage_type.name
+                        )
                     )
                     continue
-                if capacity.allow_new_product == "same" and (
+                if loc_storage_type.do_not_mix_products and (
                     len(package_products) > 1
                     or len(products_in_location) >= 1
                     and package_products != products_in_location
                 ):
-                    capacity_fails.append(
+                    lst_fails.append(
                         _(
-                            "Storage Capacity {storage_capacity} is flagged 'do not mix"
+                            "Location storage type %s is flagged 'do not mix"
                             " products' but there are other products in "
-                            "location."
-                        ).format(storage_capacity=capacity.display_name)
+                            "location." % loc_storage_type.name
+                        )
                     )
                     continue
-                if capacity.allow_new_product == "same_lot" and (
+                if loc_storage_type.do_not_mix_lots and (
                     len(package_lots) > 1
                     or len(lots_in_location) >= 1
                     and package_lots != lots_in_location
                 ):
-                    capacity_fails.append(
+                    lst_fails.append(
                         _(
-                            "Storage Capacity {storage_capacity} is flagged 'do not mix"
+                            "Location storage type %s is flagged 'do not mix"
                             " lots' but there are other lots in "
-                            "location."
-                        ).format(storage_capacity=capacity.display_name)
+                            "location." % loc_storage_type.name
+                        )
                     )
                     continue
                 # Check size constraint
                 if (
-                    capacity.storage_category_id.max_height_in_m
-                    and quant.package_id.height_in_m
-                    > capacity.storage_category_id.max_height_in_m
+                    loc_storage_type.max_height
+                    and quant.package_id.height > loc_storage_type.max_height
                 ):
-                    capacity_fails.append(
+                    lst_fails.append(
                         _(
-                            "Storage Category {storage_category} defines "
-                            "max height of {max_h} but the package is bigger: "
-                            "{height}."
-                        ).format(
-                            storage_category=capacity.storage_category_id.display_name,
-                            max_h=capacity.storage_category_id.max_height_in_m,
-                            height=quant.package_id.height_in_m,
+                            "Location storage type %s defines max height of %s"
+                            " but the package is bigger: %s."
+                            % (
+                                loc_storage_type.name,
+                                loc_storage_type.max_height,
+                                quant.package_id.height,
+                            )
                         )
                     )
                     continue
                 if (
-                    capacity.storage_category_id.max_weight_in_kg
-                    and package_weight_kg
-                    > capacity.storage_category_id.max_weight_in_kg
+                    loc_storage_type.max_weight
+                    and package_weight > loc_storage_type.max_weight
                 ):
-                    capacity_fails.append(
+                    lst_fails.append(
                         _(
-                            "Storage Category {storage_category} defines "
-                            "max weight of {max_w} but the package is heavier: "
-                            "{weight_kg}."
-                        ).format(
-                            storage_category=capacity.storage_category_id.display_name,
-                            max_w=capacity.storage_category_id.max_weight_in_kg,
-                            weight_kg=package_weight_kg,
+                            "Location storage type %s defines max weight of %s"
+                            " but the package is heavier: %s."
+                            % (
+                                loc_storage_type.name,
+                                loc_storage_type.max_weight,
+                                package_weight,
+                            )
                         )
                     )
                     continue
@@ -127,29 +121,30 @@ class StockQuant(models.Model):
             if not allowed:
                 raise ValidationError(
                     _(
-                        "Package {package} is not allowed into location {location},"
-                        " because there isn't any storage capacity that allows"
-                        " package type {type} into it:\n\n{fails}"
-                    ).format(
-                        package=quant.package_id.name,
-                        location=location.complete_name,
-                        type=package_type.name,
-                        fails="\n".join(capacity_fails),
+                        "Package %s is not allowed into location %s, because "
+                        "there isn't any location storage type that allows "
+                        "package storage type %s into it:\n\n%s"
+                    )
+                    % (
+                        quant.package_id.name,
+                        location.complete_name,
+                        pack_storage_type.name,
+                        "\n".join(lst_fails),
                     )
                 )
 
     def write(self, vals):
         res = super().write(vals)
-        self._invalidate_package_level_allowed_location_dest_ids()
+        self._invalidate_package_level_allowed_location_dest_domain()
         return res
 
-    @api.model_create_multi
-    def create(self, vals_list):
-        res = super().create(vals_list)
-        self._invalidate_package_level_allowed_location_dest_ids()
+    @api.model
+    def create(self, vals):
+        res = super().create(vals)
+        self._invalidate_package_level_allowed_location_dest_domain()
         return res
 
-    def _invalidate_package_level_allowed_location_dest_ids(self):
-        self.env["stock.package_level"].invalidate_model(
-            fnames=["allowed_location_dest_ids"]
+    def _invalidate_package_level_allowed_location_dest_domain(self):
+        self.env["stock.package_level"].invalidate_cache(
+            fnames=["allowed_location_dest_domain"]
         )

@@ -1,16 +1,14 @@
 # Copyright 2020 Camptocamp SA
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl)
-from odoo.tests import TransactionCase
+from odoo.exceptions import ValidationError
+from odoo.tests import SavepointCase
 
 
-class TestStorageType(TransactionCase):
+class TestStorageType(SavepointCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.env = cls.env(context=dict(cls.env.context, tracking_disable=True))
-        cls.location_sequence_pallet = cls.env.ref(
-            "stock_storage_type.stock_package_storage_location_pallets"
-        )
 
         cls.stock_location = cls.env.ref("stock.stock_location_stock")
         cls.pallets_location_storage_type = cls.env.ref(
@@ -40,52 +38,48 @@ class TestStorageType(TransactionCase):
         # As cardboxes location storage type is defined on parent stock
         #  location_storage_type_ids
         self.assertEqual(
-            self.cardboxes_stock.computed_storage_category_id.capacity_ids,
+            self.cardboxes_stock.location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         # It is what's allowed on the parent stock
         self.assertEqual(
-            self.cardboxes_stock.computed_storage_category_id.capacity_ids,
+            self.cardboxes_stock.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         # and also what's allowed on the children
         self.assertEqual(
-            self.cardboxes_bin_1.computed_storage_category_id.capacity_ids,
+            self.cardboxes_bin_1.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         self.assertEqual(
-            self.cardboxes_bin_2.computed_storage_category_id.capacity_ids,
+            self.cardboxes_bin_2.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         self.assertEqual(
-            self.cardboxes_bin_3.computed_storage_category_id.capacity_ids,
+            self.cardboxes_bin_3.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
-        )
-        special_cardbox = self.env["stock.storage.category"].create(
-            {
-                "name": "Special Cardboxes",
-            }
         )
         # If I change on a child, it will only be applied on this child
         special_cardboxes = self.cardboxes_location_storage_type.copy(
-            {"storage_category_id": special_cardbox.id}
+            {"name": "special cardboxes"}
         )
-        self.cardboxes_bin_1.storage_category_id = special_cardbox
+        self.cardboxes_bin_1.write(
+            {"location_storage_type_ids": [(6, 0, special_cardboxes.ids)]}
+        )
         self.assertEqual(
-            self.cardboxes_bin_1.computed_storage_category_id.capacity_ids,
-            special_cardboxes,
+            self.cardboxes_bin_1.allowed_location_storage_type_ids, special_cardboxes
         )
         # and not on his parent nor siblings
         self.assertEqual(
-            self.cardboxes_stock.computed_storage_category_id.capacity_ids,
+            self.cardboxes_stock.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         self.assertEqual(
-            self.cardboxes_bin_2.computed_storage_category_id.capacity_ids,
+            self.cardboxes_bin_2.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         self.assertEqual(
-            self.cardboxes_bin_3.computed_storage_category_id.capacity_ids,
+            self.cardboxes_bin_3.allowed_location_storage_type_ids,
             self.cardboxes_location_storage_type,
         )
         # If I create a child bin on cardboxes bin 1, it will use the first
@@ -94,8 +88,17 @@ class TestStorageType(TransactionCase):
             {"name": "Carboxes bin 1 child", "location_id": self.cardboxes_bin_1.id}
         )
         self.assertEqual(
-            bin_1_child.computed_storage_category_id.capacity_ids, special_cardboxes
+            bin_1_child.allowed_location_storage_type_ids, special_cardboxes
         )
+
+    def test_location_storage_type_constraints_definition(self):
+        # Cannot set do not mix lots without do not mix products
+        with self.assertRaises(ValidationError):
+            self.pallets_location_storage_type.do_not_mix_lots = True
+        self.pallets_location_storage_type.do_not_mix_lots = False
+        self.pallets_location_storage_type.only_empty = False
+        self.pallets_location_storage_type.do_not_mix_products = True
+        self.pallets_location_storage_type.do_not_mix_lots = True
 
     def test_location_leaf_locations(self):
         cardboxes_leaves = self.env["stock.location"].search(
@@ -116,78 +119,41 @@ class TestStorageType(TransactionCase):
         )
 
     def test_location_max_height(self):
-        self.pallets_location_storage_type.storage_category_id.max_height = 2
-        self.cardboxes_location_storage_type.storage_category_id.max_height = 0
-        category_id = self.pallets_location_storage_type.storage_category_id.id
+        self.pallets_location_storage_type.max_height = 2
+        self.pallets_uk_location_storage_type.max_height = 3
+        self.cardboxes_location_storage_type.max_height = 0
         test_location = self.env["stock.location"].create(
             {
                 "name": "TEST",
-                "storage_category_id": category_id,
+                "location_storage_type_ids": [
+                    (
+                        6,
+                        0,
+                        [
+                            self.pallets_location_storage_type.id,
+                            self.pallets_uk_location_storage_type.id,
+                            self.cardboxes_location_storage_type.id,
+                        ],
+                    ),
+                ],
             }
         )
-        # Should be the max height of pallets storage category (2)
-        self.assertEqual(test_location.max_height, 2)
-        self.cardboxes_location_storage_type.storage_category_id.max_height = 1
-        test_location.storage_category_id = (
-            self.cardboxes_location_storage_type.storage_category_id
-        )
-        # Should be the max height of cardboxes storage category (2)
-        self.assertEqual(test_location.max_height, 1)
-
-    def test_storage_type_max_height_in_meters(self):
-        # Set the 'max_height' as meters and check that 'max_height_in_m' is equal
-        uom_meter = self.env.ref("uom.product_uom_meter")
-        self.pallets_location_storage_type.storage_category_id.length_uom_id = uom_meter
-        self.pallets_location_storage_type.storage_category_id.max_height = 100
-        self.assertEqual(
-            self.pallets_location_storage_type.storage_category_id.max_height_in_m, 100
-        )
-        # Then set the UoM to centimeters and check that max_height_in_m is
-        # reduced by a factor 100
-        uom_cm = self.env.ref("uom.product_uom_cm")
-        self.pallets_location_storage_type.storage_category_id.length_uom_id = uom_cm
-        self.assertEqual(
-            self.pallets_location_storage_type.storage_category_id.max_height_in_m, 1
-        )
+        self.assertEqual(test_location.max_height, 0)
+        self.cardboxes_location_storage_type.max_height = 1
+        self.assertEqual(test_location.max_height, 3)
 
     def test_archive_package_storage_type(self):
         target = self.env.ref("stock_storage_type.package_storage_type_pallets")
-        all_package_storage_types = self.env["stock.package.type"].search([])
+        all_package_storage_types = self.env["stock.package.storage.type"].search([])
         self.assertIn(target, all_package_storage_types)
         target.active = False
-        all_package_storage_types = self.env["stock.package.type"].search([])
+        all_package_storage_types = self.env["stock.package.storage.type"].search([])
         self.assertNotIn(target, all_package_storage_types)
 
-    def test_package_message(self):
-        """
-        Test for the message displayed on Stock Package Type forms
-        """
-        pallets = self.env.ref("stock_storage_type.package_storage_type_pallets")
-        message = "When a package with storage type Pallets is put away, the "
-        message += "strategy will look for an allowed location in the "
-        message += "following locations:"
-        self.assertIn(message, pallets.storage_type_message)
-
-        message = (
-            "Pallets reserve storage area (WARNING: restrictions are active on "
-            "location storage types matching this package storage type)"
-        )
-
-        self.assertIn(message, pallets.storage_type_message)
-
-    def test_sequence_to_location_menu(self):
-        action = self.location_sequence_pallet.button_show_locations()
-        self.assertIn(
-            (
-                "computed_storage_capacity_ids",
-                "in",
-                self.location_sequence_pallet.package_type_id.storage_category_capacity_ids.ids,
-            ),
-            action["domain"],
-        )
-
-    def test_storage_capacity_display(self):
-        self.assertEqual(
-            self.cardboxes_stock.computed_storage_category_id.capacity_ids.display_name,
-            "Cardboxes x 1.0 (Package: Cardboxes - Allow New Product: Allow mixed products)",
-        )
+    def test_archive_location_storage_type(self):
+        target = self.env.ref("stock_storage_type.location_storage_type_pallets")
+        all_location_storage_types = self.env["stock.location.storage.type"].search([])
+        self.assertIn(target, all_location_storage_types)
+        target.active = False
+        all_location_storage_types = self.env["stock.location.storage.type"].search([])
+        self.assertNotIn(target, all_location_storage_types)

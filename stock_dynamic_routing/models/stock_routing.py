@@ -1,12 +1,10 @@
 # Copyright 2019-2020 Camptocamp (https://www.camptocamp.com)
-# Copyright 2022 Michael Tietz (MT Software) <mtietz@mt-software.de>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl)
 
 from collections import defaultdict
 from functools import lru_cache
 
 from odoo import _, api, fields, models
-from odoo.osv import expression
 
 
 def _default_sequence(model):
@@ -25,10 +23,7 @@ class StockRouting(models.Model):
     _rec_name = "location_id"
 
     location_id = fields.Many2one(
-        comodel_name="stock.location",
-        required=True,
-        ondelete="cascade",
-        index=True,
+        comodel_name="stock.location", required=True, ondelete="cascade", index=True,
     )
     picking_type_id = fields.Many2one(
         comodel_name="stock.picking.type",
@@ -148,25 +143,6 @@ class StockRouting(models.Model):
     def _default_sequence(self):
         return _default_sequence(self)
 
-    def _get_find_rule_for_location_domain(
-        self, pull_location_tree, push_location_tree, picking_type
-    ):
-        domain = expression.OR(
-            [
-                [
-                    ("routing_location_id", "in", pull_location_tree.ids),
-                    ("routing_picking_type_id", "=", picking_type.id),
-                    ("method", "=", "pull"),
-                ],
-                [
-                    ("routing_location_id", "in", push_location_tree.ids),
-                    ("routing_picking_type_id", "=", picking_type.id),
-                    ("method", "=", "push"),
-                ],
-            ]
-        )
-        return expression.AND([[("routing_id.active", "=", True)], domain])
-
     # TODO would be nice to add a constraint that would prevent to
     # have a pull + a push routing that would apply on the same move
     def _find_rule_for_location(self, move, src_location, dest_location):
@@ -182,10 +158,21 @@ class StockRouting(models.Model):
         pull_location_tree = src_location._location_parent_tree()
         push_location_tree = dest_location._location_parent_tree()
         picking_type = move.picking_type_id or move.picking_id.picking_type_id
-        candidate_rules_domain = self._get_find_rule_for_location_domain(
-            pull_location_tree, push_location_tree, picking_type
+        candidate_rules = self.env["stock.routing.rule"].search(
+            [
+                "|",
+                "&",
+                "&",
+                ("routing_location_id", "in", pull_location_tree.ids),
+                ("routing_picking_type_id", "=", picking_type.id),
+                ("method", "=", "pull"),
+                "&",
+                "&",
+                ("routing_location_id", "in", push_location_tree.ids),
+                ("routing_picking_type_id", "=", picking_type.id),
+                ("method", "=", "push"),
+            ]
         )
-        candidate_rules = self.env["stock.routing.rule"].search(candidate_rules_domain)
         candidate_rules.sorted(lambda r: (r.routing_id.sequence, r.sequence))
         rule = self._get_location_routing_rule(
             move, pull_location_tree, candidate_rules
@@ -202,14 +189,14 @@ class StockRouting(models.Model):
         empty_rule = self.env["stock.routing.rule"].browse()
         return empty_rule
 
-    def _routing_rule_for_move_ids(self, moves):
+    def _routing_rule_for_move_lines(self, moves):
         """Return a routing rule for move lines
 
         Look first for a pull routing rule, if no match, look for a push
         routing rule.
 
         :param move: recordset of the move
-        :return: dict {move: {rule: move_ids}}
+        :return: dict {move: {rule: move_lines}}
         """
         # ensure the cache is clean
         self.__cached_is_rule_valid_for_move.cache_clear()

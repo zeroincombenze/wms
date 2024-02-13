@@ -4,7 +4,7 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: Odoo Server 16.0\n"
+"Project-Id-Version: Odoo Server 13.0\n"
 "Report-Msgid-Bugs-To: \n"
 "Last-Translator: \n"
 "Language-Team: \n"
@@ -14,7 +14,6 @@ msgstr ""
 "Plural-Forms: \n"
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing.py:0
 #, python-format
 msgid ""
@@ -26,7 +25,6 @@ msgid ""
 msgstr ""
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing.py:0
 #, python-format
 msgid ""
@@ -99,6 +97,7 @@ msgstr ""
 #: model:ir.ui.menu,name:stock_dynamic_routing.menu_stock_routing
 #: model_terms:ir.ui.view,arch_db:stock_dynamic_routing.view_stock_routing_form
 #: model_terms:ir.ui.view,arch_db:stock_dynamic_routing.view_stock_routing_search
+#: model_terms:ir.ui.view,arch_db:stock_dynamic_routing.view_stock_routing_tree
 msgid "Dynamic Routing"
 msgstr ""
 
@@ -119,7 +118,6 @@ msgid "ID"
 msgstr ""
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing.py:0
 #, python-format
 msgid ""
@@ -140,7 +138,6 @@ msgid ""
 msgstr ""
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing.py:0
 #, python-format
 msgid ""
@@ -217,7 +214,6 @@ msgid "Operation Type"
 msgstr ""
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing_rule.py:0
 #, python-format
 msgid ""
@@ -226,7 +222,6 @@ msgid ""
 msgstr ""
 
 #. module: stock_dynamic_routing
-#. odoo-python
 #: code:addons/stock_dynamic_routing/models/stock_routing_rule.py:0
 #, python-format
 msgid ""

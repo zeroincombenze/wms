@@ -5,7 +5,7 @@ from odoo import fields
 from odoo.tests import common
 
 
-class PromiseReleaseCommonCase(common.TransactionCase):
+class PromiseReleaseCommonCase(common.SavepointCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -94,7 +94,7 @@ class PromiseReleaseCommonCase(common.TransactionCase):
                 ]
             )
         pickings = cls._pickings_in_group(group)
-        pickings.mapped("move_ids").write(
+        pickings.mapped("move_lines").write(
             {"date_priority": date or fields.Datetime.now()}
         )
         return pickings
@@ -109,7 +109,7 @@ class PromiseReleaseCommonCase(common.TransactionCase):
         # this method adds the quantity to the current quantity, so remove it
         quantity -= sum(quants.mapped("quantity"))
         cls.env["stock.quant"]._update_available_quantity(product, location, quantity)
-        cls.env["product.product"].invalidate_model(
+        cls.env["product.product"].invalidate_cache(
             fnames=[
                 "qty_available",
                 "virtual_available",
@@ -117,18 +117,3 @@ class PromiseReleaseCommonCase(common.TransactionCase):
                 "outgoing_qty",
             ]
         )
-
-    @classmethod
-    def _prev_picking(cls, picking):
-        return picking.move_ids.move_orig_ids.picking_id
-
-    @classmethod
-    def _out_picking(cls, pickings):
-        return pickings.filtered(lambda r: r.picking_type_code == "outgoing")
-
-    @classmethod
-    def _deliver(cls, picking):
-        picking.action_assign()
-        for line in picking.mapped("move_ids.move_line_ids"):
-            line.qty_done = line.reserved_qty
-        picking._action_done()

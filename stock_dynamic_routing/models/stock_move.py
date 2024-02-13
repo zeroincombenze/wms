@@ -58,14 +58,14 @@ class StockMove(models.Model):
         self._apply_routing_rule_pull(moves_with_routing_details)
         self._apply_routing_rule_push(moves_with_routing_details)
 
-    def _action_assign(self, force_qty=False):
+    def _action_assign(self):
         if self.env.context.get("exclude_apply_dynamic_routing"):
-            return super()._action_assign(force_qty=force_qty)
+            super()._action_assign()
         else:
             # these methods will call _action_assign in a savepoint
             # and modify the routing if necessary
             moves = self._split_and_apply_routing()
-            return super(StockMove, moves)._action_assign()
+            super(StockMove, moves)._action_assign()
 
     def _split_and_apply_routing(self):
         """Apply routing rules
@@ -113,7 +113,7 @@ class StockMove(models.Model):
             return self
 
         savepoint_name = uuid.uuid1().hex
-        self.env.flush_all()
+        self.env["base"].flush()
         # pylint: disable=sql-injection
         self.env.cr.execute(
             sql.SQL("SAVEPOINT {}").format(sql.Identifier(savepoint_name))
@@ -126,7 +126,7 @@ class StockMove(models.Model):
         ):
             # no routing to apply, so the reservations done by _action_assign
             # are valid and we can resolve to a normal flow
-            self.env.flush_all()
+            self.env["base"].flush()
             # pylint: disable=sql-injection
             self.env.cr.execute(
                 sql.SQL("RELEASE SAVEPOINT {}").format(sql.Identifier(savepoint_name))
@@ -148,7 +148,9 @@ class StockMove(models.Model):
         Return a dictionary {move: {rule: reserved quantity}}. The rule for a quantity
         can be an empty recordset, which means no routing rule.
         """
-        move_routing_rules = self.env["stock.routing"]._routing_rule_for_move_ids(self)
+        move_routing_rules = self.env["stock.routing"]._routing_rule_for_move_lines(
+            self
+        )
         moves_routing = {}
         no_loc = self.env["stock.location"].browse()
         for move in self:
@@ -168,14 +170,14 @@ class StockMove(models.Model):
                 if rule.method == "push":
                     dests = defaultdict(lambda: 0.0)
                     for line in move_lines:
-                        dests[line.location_dest_id] += line.reserved_qty
+                        dests[line.location_dest_id] += line.product_qty
                     for destination, qty in dests.items():
                         moves_routing[move][
                             self.RoutingDetails(rule, destination)
                         ] = qty
                 else:
                     moves_routing[move][self.RoutingDetails(rule, no_loc)] = sum(
-                        move_lines.mapped("reserved_qty")
+                        move_lines.mapped("product_qty")
                     )
             if move.state == "partially_available":
                 # consider unreserved quantity as without routing, so it will
@@ -216,13 +218,11 @@ class StockMove(models.Model):
                 # lines with different routing (or lines with a dynamic
                 # routing, lines without). We split the lines according to
                 # these.
-                new_move_vals = move._split(qty)
-                if new_move_vals:
-                    new_move = self.env["stock.move"].create(new_move_vals)
-                    new_move._action_confirm(merge=False)
-                else:
-                    # If no split occurred keep the current move
-                    new_move = move
+                # The _split() method returns the same move if the qty is the
+                # same than the move's qty, so we don't need to explicitly
+                # check if we really need to split or not.
+                new_move_id = move._split(qty)
+                new_move = self.env["stock.move"].browse(new_move_id)
                 moves_with_routing_details[new_move] = routing_details
 
         return moves_with_routing_details
@@ -243,16 +243,16 @@ class StockMove(models.Model):
             (move, detail.rule) for move, detail in routing_details.items()
         ]
         for move, routing_rule in routing_to_apply:
-            if not routing_rule:
-                move_ids_to_assign_nonrelocated.append(move.id)
-                continue
-
             if routing_rule.method == "push":
                 # In this case, we should not assign the move inside the
                 # pull dynamic routing. The push move must first be added before the
                 # initial move is assigned. Otherwise, when the destination
                 # location of the initial move is changed by the push rule, the
                 # putaway won't be recomputed as it is already assigned.
+                continue
+
+            if not routing_rule:
+                move_ids_to_assign_nonrelocated.append(move.id)
                 continue
 
             if move.picking_id.picking_type_id == routing_rule.picking_type_id:
@@ -387,11 +387,7 @@ class StockMove(models.Model):
                 origmoves_by_location[orig_move.location_dest_id] |= orig_move
             for location_id, orig_moves in reversed(origmoves_by_location.items()):
                 qty = sum(orig_moves.mapped("product_qty"))
-                split_move = move
-                split_move_vals = move._split(qty)
-                if split_move_vals:
-                    split_move = self.create(split_move_vals)
-                    split_move._action_confirm(merge=False)
+                split_move = self.browse(move._split(qty))
                 if split_move != move:
                     # No split occurs if the quantity was the same.
                     # But if it did split, detach it from the move on which
@@ -495,9 +491,6 @@ class StockMove(models.Model):
             picking_type, location, destination
         )
         routing_move = self.copy(routing_move_values)
-        # force picking_type since it's a computed field from the stock_picking
-        # and the copy method will assign the one from the original move
-        routing_move.picking_type_id = picking_type
 
         # modify the chain to include the new move
         self.write(

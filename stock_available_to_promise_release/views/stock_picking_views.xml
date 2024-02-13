@@ -5,10 +5,8 @@
         <field name="model">stock.picking</field>
         <field name="inherit_id" ref="stock.view_picking_form" />
         <field name="arch" type="xml">
-            <sheet position="inside">
-              <field name="need_release" invisible="1" />
-            </sheet>
             <button name="action_confirm" position="after">
+                <field name="need_release" invisible="1" />
                 <field name="release_ready" invisible="1" />
                 <button
                     name="release_available_to_promise"
@@ -41,20 +39,6 @@
                     </div>
                 </button>
             </div>
-            <button name="action_assign_serial" position="after">
-                <field name="unrelease_allowed" invisible="1" />
-                <button
-                    name="unrelease"
-                    attrs="{'invisible': [('unrelease_allowed', '=', False)]}"
-                    string="Un Release"
-                    type="object"
-                    icon="fa-cube"
-                    groups="stock.group_stock_user"
-                />
-            </button>
-            <field name="date_done" position="before">
-                <field name="last_release_date" />
-            </field>
         </field>
     </record>
     <record id="view_picking_release_tree" model="ir.ui.view">
@@ -64,11 +48,13 @@
         <field name="inherit_id" ref="stock.vpicktree" />
         <field eval="900" name="priority" />
         <field name="arch" type="xml">
+            <field name="partner_id" position="after">
+                <field name="zip_code" optional="hide" />
+                <field name="city" optional="hide" />
+                <field name="state_id" options="{'no_open': True}" optional="hide" />
+            </field>
             <field name="origin" position="after">
                 <field name="group_id" optional="hide" />
-            </field>
-            <field name="scheduled_date" position="after">
-                <field name="last_release_date" optional="hide" />
             </field>
             <tree position="inside">
                 <field name="date_priority" optional="show" />
